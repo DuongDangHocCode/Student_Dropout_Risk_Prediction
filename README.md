@@ -1,6 +1,6 @@
 # Student Dropout Risk Prediction
 
-A Streamlit web app for predicting student dropout risk using a trained machine learning model.
+A simple Streamlit web app for predicting student dropout risk using a trained machine learning model.
 
 ## Project structure
 
@@ -8,7 +8,6 @@ A Streamlit web app for predicting student dropout risk using a trained machine 
 Student_Dropout_Risk_Prediction/
 │
 ├── app.py
-├── Student_Dropout_Risk_Prediction.ipynb
 ├── requirements.txt
 ├── README.md
 └── models/
@@ -30,7 +29,7 @@ cd Student_Dropout_Risk_Prediction
 python -m venv venv
 ```
 
-Activate it:
+Activate the virtual environment:
 
 ```bash
 # Windows
@@ -48,15 +47,23 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Run the Streamlit app
+The `requirements.txt` file is only for running `app.py`.
 
-Make sure the trained model checkpoint is placed inside the `models/` folder:
+## Required model file
+
+Before running the app, make sure the trained model checkpoint is placed in the `models/` folder:
 
 ```text
 models/best_model_Random_Forest.pkl
 ```
 
-Then run:
+If your model file has another name, it should still follow this format:
+
+```text
+models/best_model_*.pkl
+```
+
+## Run the app
 
 ```bash
 streamlit run app.py
@@ -68,22 +75,7 @@ After running the command, open the local URL shown in the terminal, usually:
 http://localhost:8501
 ```
 
-## Train the model again
-
-If the model file is missing, run the notebook:
-
-```text
-Student_Dropout_Risk_Prediction.ipynb
-```
-
-Run all cells until the final checkpoint saving step. The notebook will save the trained model bundle into the `models/` folder.
-
 ## Note
 
-The app uses the same preprocessing and feature engineering steps as the training notebook, so the saved model bundle must include:
-
-- the trained model
-- the preprocessor
-- selected raw features
-- processed feature names
-- target label mapping
+This repository includes the Streamlit app for prediction.  
+The model training process is done separately in the notebook, and the final trained model should be saved into the `models/` folder before running the app.
