@@ -32,11 +32,12 @@ source venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
+```
 
 ## Run the app
 
 ```bash
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 After running the command, open the local URL shown in the terminal, usually:
