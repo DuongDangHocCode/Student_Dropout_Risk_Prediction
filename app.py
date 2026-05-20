@@ -3,7 +3,6 @@ from pathlib import Path
 import joblib
 import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go  
 
 
 # =========================================================
@@ -86,9 +85,19 @@ def load_checkpoint_from_path(path: str):
 
 
 def predict_from_raw_input(raw_input_dict: dict, checkpoint: dict):
-    # Chỉ dùng best model đã lưu trong checkpoint
-    real_model_name = checkpoint["best_model_name"]
-    model = checkpoint["models"][real_model_name]
+    # Notebook lưu final model trực tiếp ở key "model"
+    # Giữ fallback "models" để app vẫn chạy nếu dùng checkpoint format cũ.
+    real_model_name = checkpoint.get("best_model_name", "Unknown model")
+
+    if "model" in checkpoint:
+        model = checkpoint["model"]
+    elif "models" in checkpoint and real_model_name in checkpoint["models"]:
+        model = checkpoint["models"][real_model_name]
+    else:
+        raise KeyError(
+            "Checkpoint không có key 'model'. "
+            "Hãy dùng file models/best_model_Random_Forest.pkl được lưu từ notebook."
+        )
 
     input_df = pd.DataFrame([raw_input_dict])
     input_df = normalize_columns(input_df)
@@ -100,7 +109,11 @@ def predict_from_raw_input(raw_input_dict: dict, checkpoint: dict):
     if missing_cols:
         raise ValueError(f"Missing columns / Thiếu cột đầu vào: {missing_cols}")
 
-    input_df = input_df[selected_raw_features]
+    input_df = input_df[selected_raw_features].copy()
+
+    # Notebook convert các selected features về numeric trước khi fit preprocessor.
+    for col in selected_raw_features:
+        input_df[col] = pd.to_numeric(input_df[col], errors="raise")
 
     processed = checkpoint["preprocessor"].transform(input_df)
 
@@ -112,18 +125,36 @@ def predict_from_raw_input(raw_input_dict: dict, checkpoint: dict):
         columns=checkpoint["processed_feature_names"],
     )
 
-    pred = int(model.predict(input_processed)[0])
+    pred = model.predict(input_processed)[0]
+    try:
+        pred_key = int(pred)
+    except (TypeError, ValueError):
+        pred_key = pred
 
     inverse_mapping = checkpoint.get(
         "inverse_target_mapping",
         {0: "Graduate", 1: "Dropout"}
     )
 
-    prediction_label = inverse_mapping.get(pred, inverse_mapping.get(str(pred), str(pred)))
+    prediction_label = inverse_mapping.get(
+        pred_key,
+        inverse_mapping.get(str(pred_key), str(pred_key))
+    )
 
     dropout_probability = None
     if hasattr(model, "predict_proba"):
-        dropout_probability = float(model.predict_proba(input_processed)[0][1])
+        proba = model.predict_proba(input_processed)[0]
+
+        # Lấy đúng xác suất của class Dropout = 1, không giả định luôn nằm ở index 1.
+        classes = list(getattr(model, "classes_", []))
+        if 1 in classes:
+            dropout_idx = classes.index(1)
+        elif "Dropout" in classes:
+            dropout_idx = classes.index("Dropout")
+        else:
+            dropout_idx = 1 if len(proba) > 1 else 0
+
+        dropout_probability = float(proba[dropout_idx])
 
     return {
         "actual_model_used": real_model_name,
@@ -210,6 +241,110 @@ def float_input(
             step=step,
             help=help_text,
         )
+    )
+
+
+# =========================================================
+# Result UI helper
+# =========================================================
+def render_dropout_circle(dropout_probability: float, is_dropout: bool, prediction_label: str, model_name: str):
+    """Hiển thị một vòng tròn đơn giản thay cho biểu đồ pie."""
+    percent = max(0.0, min(100.0, dropout_probability * 100.0))
+
+    if is_dropout:
+        main_color = "#ef4444"   # red
+        soft_color = "rgba(239, 68, 68, 0.16)"
+        status_text = "Dropout / Có nguy cơ bỏ học"
+    else:
+        main_color = "#22c55e"   # green
+        soft_color = "rgba(34, 197, 94, 0.16)"
+        status_text = "Graduate / Có khả năng tốt nghiệp"
+
+    st.markdown(
+        f"""
+        <style>
+        .result-card {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 28px 16px 18px 16px;
+            border-radius: 22px;
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            background: rgba(15, 23, 42, 0.28);
+            margin-top: 8px;
+        }}
+
+        .dropout-ring {{
+            width: 260px;
+            height: 260px;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle at center, #0e1117 0 58%, transparent 59%),
+                conic-gradient({main_color} {percent:.2f}%, rgba(148, 163, 184, 0.20) 0);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 32px {soft_color};
+        }}
+
+        .dropout-inner {{
+            width: 176px;
+            height: 176px;
+            border-radius: 50%;
+            background: #0e1117;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(148, 163, 184, 0.18);
+        }}
+
+        .dropout-value {{
+            font-size: 42px;
+            line-height: 1;
+            font-weight: 800;
+            color: {main_color};
+            margin-bottom: 10px;
+        }}
+
+        .dropout-label {{
+            font-size: 15px;
+            font-weight: 650;
+            color: rgba(226, 232, 240, 0.92);
+            text-align: center;
+        }}
+
+        .result-status {{
+            margin-top: 20px;
+            padding: 9px 18px;
+            border-radius: 999px;
+            background: {soft_color};
+            color: {main_color};
+            font-size: 18px;
+            font-weight: 750;
+            text-align: center;
+        }}
+
+        .model-caption {{
+            margin-top: 12px;
+            color: rgba(148, 163, 184, 0.95);
+            font-size: 13px;
+            text-align: center;
+        }}
+        </style>
+
+        <div class="result-card">
+            <div class="dropout-ring">
+                <div class="dropout-inner">
+                    <div class="dropout-value">{percent:.2f}%</div>
+                    <div class="dropout-label">Dropout risk<br/>Xác suất bỏ học</div>
+                </div>
+            </div>
+            <div class="result-status">{status_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
 
@@ -438,12 +573,24 @@ FATHER_OCCUPATION = {
 st.title("🎓 Student Dropout Risk Prediction")
 st.subheader("Dự đoán nguy cơ sinh viên bỏ học")
 
-default_checkpoint_path = Path("models/demo_checkpoint.pkl")
+# Notebook lưu file theo dạng: models/best_model_<Tên_model>.pkl
+default_checkpoint_path = Path("models/best_model_Random_Forest.pkl")
+
+if not default_checkpoint_path.exists():
+    # Fallback: tự tìm checkpoint best_model_*.pkl trong thư mục models
+    candidates = sorted(Path("models").glob("best_model_*.pkl"))
+    if candidates:
+        default_checkpoint_path = candidates[0]
 
 if default_checkpoint_path.exists():
     checkpoint = load_checkpoint_from_path(str(default_checkpoint_path))
+    st.caption(f"Loaded checkpoint / Đã tải checkpoint: `{default_checkpoint_path}`")
 else:
-    st.error("Không tìm thấy file `models/demo_checkpoint.pkl`.")
+    st.error(
+        "Không tìm thấy checkpoint. "
+        "Hãy chạy notebook đến cell SAVE FINAL CHECKPOINT rồi đặt file "
+        "`best_model_Random_Forest.pkl` trong thư mục `models/`."
+    )
     st.stop()
 
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -777,8 +924,7 @@ if st.button("Predict dropout risk / Dự đoán nguy cơ bỏ học", type="pri
 
         prediction = str(result["prediction"])
         prob = result["dropout_probability"]
-
-        is_dropout = prediction.lower() == "dropout"
+        is_dropout = prediction.strip().lower() == "dropout"
 
         if prob is None:
             st.info(
@@ -786,86 +932,13 @@ if st.button("Predict dropout risk / Dự đoán nguy cơ bỏ học", type="pri
                 "Mô hình này không hỗ trợ xác suất."
             )
         else:
-            graduate_prob = 1 - prob
-
-            if prob >= 0.70:
-                risk_level = "High / Cao"
-            elif prob >= 0.40:
-                risk_level = "Medium / Trung bình"
-            else:
-                risk_level = "Low / Thấp"
-
-            if is_dropout:
-                center_text = "Dropout<br>Bỏ học"
-                result_text = "Prediction: Dropout / Dự đoán: Có nguy cơ bỏ học"
-            else:
-                center_text = "Graduate<br>Tốt nghiệp"
-                result_text = "Prediction: Graduate / Dự đoán: Có khả năng tốt nghiệp"
-
             st.markdown("## Prediction result / Kết quả dự đoán")
-
-            fig = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=[
-                            "Dropout / Bỏ học",
-                            "Graduate / Tốt nghiệp",
-                        ],
-                        values=[
-                            prob,
-                            graduate_prob,
-                        ],
-                        hole=0.62,
-                        textinfo="label+percent",
-                        sort=False,
-                    )
-                ]
+            render_dropout_circle(
+                dropout_probability=prob,
+                is_dropout=is_dropout,
+                prediction_label=prediction,
+                model_name=result["actual_model_used"],
             )
-
-            fig.update_layout(
-                title="Dropout Risk Chart / Biểu đồ nguy cơ bỏ học",
-                height=520,
-                margin=dict(t=80, b=40, l=40, r=40),
-                showlegend=True,
-                annotations=[
-                    dict(
-                        text=f"<b>{center_text}</b><br>{prob:.1%}",
-                        x=0.5,
-                        y=0.5,
-                        font_size=24,
-                        showarrow=False,
-                    )
-                ],
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-                st.metric(
-                    "Dropout probability / Xác suất bỏ học",
-                    f"{prob:.2%}"
-                )
-
-            with col2:
-                st.metric(
-                    "Graduate probability / Xác suất tốt nghiệp",
-                    f"{graduate_prob:.2%}"
-                )
-
-            with col3:
-                st.metric(
-                    "Risk level / Mức rủi ro",
-                    risk_level
-                )
-
-            if is_dropout:
-                st.error(result_text)
-            else:
-                st.success(result_text)
-
-            st.caption(f"Model used / Mô hình sử dụng: {result['actual_model_used']}")
 
     except Exception as e:
         st.exception(e)
